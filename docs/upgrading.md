@@ -123,7 +123,11 @@ where notes only hint at it.
 7. **byparr — verify the FlareSolverr contract.** `POST /v1` with
    `{"cmd":"request.get","url":"https://example.com","maxTimeout":60000}` must
    return `status: ok` and a `solution` object carrying `status`, `url`,
-   `response`, `cookies`, `headers`, and `userAgent`.
+   `response`, `cookies`, `headers`, and `userAgent`. Also time `/health`: it
+   drives a real browser and is slow (~7.5s on byparr 3.x through the tunnel).
+   If a future version gets slower still, raise `HTTP_PROBE_TIMEOUT` in
+   `verify_services` — a probe that outruns the endpoint reports a healthy
+   solver as dead and rolls back a good upgrade.
 8. **Record the verdict in `CHANGELOG.md` — including when it is "no migration
    needed", and how you established that.** This is the durable artifact. The
    next person bumping the same image needs to know the question was asked and
