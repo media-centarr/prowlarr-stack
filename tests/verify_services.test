@@ -6,6 +6,7 @@ source "./scripts/lib/common"
 
 # Keep the poll loop fast; these tests never touch a real container.
 export HTTP_POLL_INTERVAL=1
+export HTTP_PROBE_TIMEOUT=1
 
 # Replace the docker-exec probe with a table-driven stub. RESPONSES maps a
 # substring of the probed URL to the body to return; an unmapped URL simulates
@@ -92,4 +93,34 @@ test_verify_services_tolerates_sabnzbd_without_usenet_credentials() {
   _all_healthy
   RESPONSES["mode=version"]='{"version":"5.1.2"}'
   verify_services 5 >/dev/null 2>&1
+}
+
+# --- timeout budget ---
+
+test_wait_for_http_respects_its_wall_clock_budget() {
+  # Regression: the budget used to count only the sleeps, so a probe that blocked
+  # was invisible to it and the effective timeout ballooned to several times what
+  # the caller asked for. In the upgrade gate that delayed a rollback by minutes.
+  # A probe that burns 2s per call must still not overrun a 6s budget by much.
+  http_probe_in_container() { sleep 2; return 1; }
+  local start elapsed
+  start=$(date +%s)
+  ! wait_for_http gluetun "http://127.0.0.1:9696/ping" "OK" 6
+  elapsed=$(( $(date +%s) - start ))
+  # Allow one in-flight probe to finish past the deadline, but nothing like the
+  # old ~3x overrun.
+  [[ "$elapsed" -le 10 ]]
+}
+
+test_wait_for_http_probes_at_least_once_with_a_tiny_budget() {
+  # A budget too small for a second attempt must still make the first one,
+  # rather than returning failure without ever probing.
+  # The counter lives in a file because the probe runs inside a command
+  # substitution, so a shell variable would be incremented in a subshell.
+  local counter; counter=$(mktemp)
+  http_probe_in_container() { echo x >> "$counter"; echo "OK"; return 0; }
+  wait_for_http gluetun "http://127.0.0.1:9696/ping" "OK" 1
+  local calls; calls=$(wc -l < "$counter")
+  rm -f "$counter"
+  [[ "$calls" -ge 1 ]]
 }

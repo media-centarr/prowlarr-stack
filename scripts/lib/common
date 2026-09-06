@@ -660,8 +660,11 @@ verify_isolation() {
 # container makes the probe independent of host port publishing and of which
 # qBittorrent topology is active.
 http_probe_in_container() {
-  local container="$1" url="$2" timeout="${3:-10}"
-  docker exec "$container" wget -qO- --timeout="$timeout" "$url" 2>/dev/null
+  local container="$1" url="$2" timeout="${3:-20}"
+  # Hard outer bound as well as wget's own --timeout: wget's timeouts only cover
+  # its network operations, so a wedged `docker exec` would otherwise block
+  # forever and stall the upgrade gate.
+  timeout "$((timeout + 5))" docker exec "$container" wget -qO- --timeout="$timeout" "$url" 2>/dev/null
 }
 
 # wait_for_http <container> <url> <marker> [timeout_seconds]
@@ -672,18 +675,26 @@ http_probe_in_container() {
 # would roll back a perfectly good upgrade.
 wait_for_http() {
   local container="$1" url="$2" marker="$3" timeout="${4:-120}"
-  # Poll interval is a variable so the test suite can shrink it; nothing in the
-  # shipped scripts overrides it.
+  # Poll interval and per-probe timeout are variables so the test suite can
+  # shrink them; nothing in the shipped scripts overrides them.
   local interval="${HTTP_POLL_INTERVAL:-3}"
-  local elapsed=0 body
-  while (( elapsed < timeout )); do
-    if body=$(http_probe_in_container "$container" "$url" 5) && [[ "$body" == *"$marker"* ]]; then
+  # A probe needs to outlast a slow endpoint: byparr's /health drives a real
+  # browser and routinely takes over ten seconds through the tunnel, so a short
+  # per-probe timeout reports a healthy solver as dead.
+  local probe_timeout="${HTTP_PROBE_TIMEOUT:-20}"
+  # The deadline is wall-clock, not accumulated sleeps. Counting only the sleeps
+  # makes a blocking probe invisible to the budget, so the effective timeout
+  # balloons to several times what the caller asked for — which in the upgrade
+  # gate means minutes of delay before a rollback decision.
+  local deadline=$(( $(date +%s) + timeout ))
+  local body
+  while :; do
+    if body=$(http_probe_in_container "$container" "$url" "$probe_timeout") && [[ "$body" == *"$marker"* ]]; then
       return 0
     fi
+    (( $(date +%s) + interval < deadline )) || return 1
     sleep "$interval"
-    elapsed=$((elapsed + interval))
   done
-  return 1
 }
 
 # verify_services [timeout_seconds]

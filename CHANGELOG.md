@@ -9,6 +9,22 @@ All notable changes to prowlarr-stack are documented here. Format follows
 ### Changed
 ### Fixed
 
+## [1.2.1] - 2026-09-06
+
+### Fixed
+- **`./check` reported a healthy byparr as dead, hanging the upgrade gate for
+  minutes.** Two faults in the service probes shipped in 1.2.0, both found by
+  running a real upgrade:
+  - The per-probe `wget` timeout was 5s, but byparr 3.x's `/health` drives a real
+    browser and takes ~7.5s through the tunnel. Every probe timed out, so a
+    working solver looked unreachable. The per-probe timeout is now 20s, and the
+    probe is additionally wrapped in `timeout` so a wedged `docker exec` cannot
+    block forever — `wget --timeout` only bounds its own network operations.
+  - `wait_for_http` measured its budget by summing its sleeps, which made the
+    time spent inside a blocking probe invisible. A nominal 120s budget took
+    over five minutes of wall clock to give up, delaying the rollback decision.
+    The budget is now a wall-clock deadline.
+
 ## [1.2.0] - 2026-09-06
 
 ### Changed
