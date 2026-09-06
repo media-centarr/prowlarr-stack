@@ -9,6 +9,52 @@ All notable changes to prowlarr-stack are documented here. Format follows
 ### Changed
 ### Fixed
 
+## [1.2.0] - 2026-09-06
+
+### Changed
+- **Bumped all pinned upstream container images to current releases:**
+  gluetun `v3.41.1` → `v3.41.3`, Prowlarr `2.4.0.5397-ls151` →
+  `2.5.2.5491-ls158`, byparr `2.1.0` → `3.0.4`, qBittorrent
+  `5.2.2_v2.0.13-ls463` → `5.2.3_v2.0.14-ls475`, and SABnzbd `5.0.4-ls262` →
+  `5.1.2-ls271`. **No migration is needed for this bump**, established
+  per-service rather than assumed:
+  - *Prowlarr*: booting 2.5.2 against a copy of the seeded DB migrates its
+    schema 43 → 44 (`myanonamouse_freeleech_wedge_checkbox`) and leaves
+    `DownloadClients`, `Tags`, and `IndexerProxies` — the only tables our
+    migrations touch — unchanged. All three migrations re-run as clean no-ops
+    against the result.
+  - *qBittorrent*: stays on the libtorrent v2 line (`v2.0.13` → `v2.0.14`), so
+    existing `.fastresume` data remains valid.
+  - *SABnzbd*: 5.1.2 leaves `sabnzbd.ini` at `__version__ = 19` and keeps every
+    key `set-sab-config` writes in the same section, verified by booting it
+    against the seeded ini and letting it rewrite the file on shutdown.
+  - *byparr*: 3.x replaces Camoufox with a Playwright-managed Firefox, but the
+    FlareSolverr `/v1` contract Prowlarr depends on is unchanged — `request.get`
+    still returns `status: ok` with a full `solution` object on port 8191. Its
+    headline fix is restoring Cloudflare challenge solving against current TLS
+    fingerprinting.
+  - *gluetun*: v3.41.2/3 are bugfix-only, with no changes to the seven
+    environment variables `docker-compose.yml` sets.
+- **`./check` now verifies service health, not just VPN isolation.** It probes
+  Prowlarr's `/ping`, byparr's `/health`, and SABnzbd's version endpoint, each
+  with a retry window that absorbs slow starts after a restart. Because
+  `./update` uses `./check` as its upgrade gate, an image bump that broke byparr
+  or SABnzbd previously passed verification and was never rolled back — only
+  Prowlarr and qBittorrent were covered, and only via their external IPs. Both
+  gates now run even when the first fails, so one invocation reports everything
+  that is wrong. The SABnzbd probe deliberately asserts only that the WebUI
+  answers, since running without usenet credentials is a supported state.
+- `tests/fixtures/prowlarr.db.seeded` regenerated against Prowlarr 2.5.2, so the
+  `patch-prowlarr-db` tests run against the schema installs actually have.
+
+### Added
+- **`docs/upgrading.md` gained a maintainer checklist for bumping pinned
+  images.** The repo documented the upgrade *mechanism* thoroughly but never how
+  to decide whether a bump needs a migration. It now records which on-disk state
+  each image owns, how to establish a verdict empirically per service, and the
+  requirement to write that verdict into the changelog even when the answer is
+  "no migration needed". `scripts/bump-images` points at it after editing pins.
+
 ## [1.1.1] - 2026-07-20
 
 ### Fixed
