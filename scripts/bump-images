@@ -4,6 +4,10 @@
 #
 # For each service, prints the current pin and prompts for a new tag; press
 # Enter to keep the current value. Prints the diff at the end for review.
+#
+# This script only edits pins. Deciding whether a bump needs a migration is a
+# separate, mandatory step — work the checklist in docs/upgrading.md
+# ("Maintainer: bumping pinned images") before cutting the release.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,4 +55,13 @@ else
   log_warn "git not available — review docker-compose.yml manually"
 fi
 
-log_info "Remember to update CHANGELOG.md under [Unreleased] before committing."
+echo ""
+log_warn "Pins edited — the bump is not done yet."
+log_info "Work the pre-bump checklist in docs/upgrading.md before releasing:"
+log_info "  - diff Prowlarr's schema and re-run migrations/ against it"
+log_info "  - regenerate tests/fixtures/prowlarr.db.seeded if Prowlarr moved"
+log_info "  - confirm qBittorrent's libtorrent line is unchanged"
+log_info "  - confirm SABnzbd's ini keys survive a boot+shutdown rewrite"
+log_info "  - verify byparr still speaks the FlareSolverr /v1 protocol"
+log_info "Then record the verdict in CHANGELOG.md under [Unreleased] —"
+log_info "including 'no migration needed', and how you established it."
