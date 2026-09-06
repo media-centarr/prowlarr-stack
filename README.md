@@ -68,8 +68,9 @@ How to add and tune your indexers (and which ones to disable when searches feel 
 This is a **transaction**: it takes a pre-flight backup, downloads the latest
 release (verifying its SHA256), preserves your `.env` and `config/`, swaps in the
 new version, runs any pending DB migrations, restarts, and verifies gluetun
-health + VPN isolation. If anything fails — a bad migration, gluetun not coming
-up, isolation broken — it **automatically rolls back** to the version you were on.
+health, service health, and VPN isolation. If anything fails — a bad migration,
+gluetun not coming up, a service not answering, isolation broken — it
+**automatically rolls back** to the version you were on.
 
 Pin to a specific version (upgrade, downgrade, or roll back):
 
@@ -158,7 +159,7 @@ Options:
 ./scripts/start     # start the stack
 ./scripts/stop      # stop it
 ./scripts/restart   # restart (e.g., after OS reboot)
-./check             # verify the VPN is routing traffic correctly
+./check             # verify every service answers and the VPN routes correctly
 ```
 
 ## Reconfigure

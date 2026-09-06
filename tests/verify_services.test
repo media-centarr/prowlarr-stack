@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -u
+
+# shellcheck source=../scripts/lib/common
+source "./scripts/lib/common"
+
+# Keep the poll loop fast; these tests never touch a real container.
+export HTTP_POLL_INTERVAL=1
+
+# Replace the docker-exec probe with a table-driven stub. RESPONSES maps a
+# substring of the probed URL to the body to return; an unmapped URL simulates
+# an unreachable service (non-zero exit, as wget would give).
+declare -A RESPONSES=()
+http_probe_in_container() {
+  local url="$2"
+  local key
+  for key in "${!RESPONSES[@]}"; do
+    if [[ "$url" == *"$key"* ]]; then
+      echo "${RESPONSES[$key]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+_all_healthy() {
+  RESPONSES=(
+    ["9696/ping"]='{"status": "OK"}'
+    ["8191/health"]='{"msg":"Byparr is working!","version":"3.0.4"}'
+    ["mode=version"]='{"version":"5.1.2"}'
+  )
+}
+
+# --- wait_for_http ---
+
+test_wait_for_http_succeeds_when_marker_present() {
+  _all_healthy
+  wait_for_http gluetun "http://127.0.0.1:9696/ping" "OK" 5
+}
+
+test_wait_for_http_fails_when_service_unreachable() {
+  RESPONSES=()
+  ! wait_for_http gluetun "http://127.0.0.1:9696/ping" "OK" 2
+}
+
+test_wait_for_http_fails_when_marker_absent() {
+  # Service answers, but with the wrong body — a 200 from the wrong process
+  # must not count as healthy.
+  RESPONSES=(["9696/ping"]='<html>404 not found</html>')
+  ! wait_for_http gluetun "http://127.0.0.1:9696/ping" "OK" 2
+}
+
+# --- verify_services ---
+
+test_verify_services_passes_when_all_three_respond() {
+  _all_healthy
+  verify_services 5 >/dev/null 2>&1
+}
+
+test_verify_services_fails_when_prowlarr_down() {
+  _all_healthy
+  unset 'RESPONSES[9696/ping]'
+  ! verify_services 2 >/dev/null 2>&1
+}
+
+test_verify_services_fails_when_byparr_down() {
+  # The regression this gate exists for: before it, a broken solver passed the
+  # upgrade check and was never rolled back.
+  _all_healthy
+  unset 'RESPONSES[8191/health]'
+  ! verify_services 2 >/dev/null 2>&1
+}
+
+test_verify_services_fails_when_sabnzbd_down() {
+  _all_healthy
+  unset 'RESPONSES[mode=version]'
+  ! verify_services 2 >/dev/null 2>&1
+}
+
+test_verify_services_reports_every_failure_not_just_the_first() {
+  # All three down: the output must name all three, so one run tells the
+  # operator everything that is broken.
+  RESPONSES=()
+  local out
+  out=$(verify_services 2 2>&1) || true
+  grep -q "prowlarr" <<<"$out" && grep -q "byparr" <<<"$out" && grep -q "sabnzbd" <<<"$out"
+}
+
+test_verify_services_tolerates_sabnzbd_without_usenet_credentials() {
+  # SABnzbd's WebUI comes up whether or not news-server creds are set, and
+  # running without them is supported — the probe must not assert on them.
+  _all_healthy
+  RESPONSES["mode=version"]='{"version":"5.1.2"}'
+  verify_services 5 >/dev/null 2>&1
+}

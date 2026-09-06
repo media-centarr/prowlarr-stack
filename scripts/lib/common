@@ -652,6 +652,84 @@ verify_isolation() {
   return 0
 }
 
+# http_probe_in_container <container> <url> [timeout_seconds]
+# Fetches <url> with wget from inside <container> and echoes the body.
+# Probing from inside a container (rather than the host) is deliberate: prowlarr
+# and byparr share gluetun's network namespace and publish no ports of their
+# own, and sabnzbd's host port is remapped (8085->8080). Going in via the
+# container makes the probe independent of host port publishing and of which
+# qBittorrent topology is active.
+http_probe_in_container() {
+  local container="$1" url="$2" timeout="${3:-10}"
+  docker exec "$container" wget -qO- --timeout="$timeout" "$url" 2>/dev/null
+}
+
+# wait_for_http <container> <url> <marker> [timeout_seconds]
+# Polls <url> from inside <container> until the response body contains <marker>.
+# Returns 0 on match, 1 on timeout. The retry window matters because ./check is
+# the post-upgrade rollback gate: after a restart a service may still be
+# migrating its database or launching a browser, and a single-shot probe there
+# would roll back a perfectly good upgrade.
+wait_for_http() {
+  local container="$1" url="$2" marker="$3" timeout="${4:-120}"
+  # Poll interval is a variable so the test suite can shrink it; nothing in the
+  # shipped scripts overrides it.
+  local interval="${HTTP_POLL_INTERVAL:-3}"
+  local elapsed=0 body
+  while (( elapsed < timeout )); do
+    if body=$(http_probe_in_container "$container" "$url" 5) && [[ "$body" == *"$marker"* ]]; then
+      return 0
+    fi
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+  return 1
+}
+
+# verify_services [timeout_seconds]
+# Asserts every application service actually answers, not just that the tunnel
+# is up. verify_isolation covers prowlarr and qBittorrent only (via their
+# external IPs), which left byparr and SABnzbd unverified — an image bump that
+# broke either one passed the upgrade gate and was never rolled back.
+# Returns 0 only if all three probes succeed.
+verify_services() {
+  local timeout="${1:-120}"
+  local failed=0
+  log_phase "service health"
+
+  # Prowlarr's /ping is unauthenticated and returns {"status": "OK"}.
+  if wait_for_http gluetun "http://127.0.0.1:9696/ping" "OK" "$timeout"; then
+    log_ok "prowlarr" "API responding (:9696/ping)"
+  else
+    log_fail "prowlarr" "API did not respond within ${timeout}s"
+    log_info "check: docker logs prowlarr"
+    failed=1
+  fi
+
+  # byparr answers /health with {"msg":"Byparr is working!",...} on 8191, the
+  # same port Prowlarr's FlareSolverr indexer proxy talks to.
+  if wait_for_http gluetun "http://127.0.0.1:8191/health" "Byparr" "$timeout"; then
+    log_ok "byparr" "solver responding (:8191/health)"
+  else
+    log_fail "byparr" "solver did not respond within ${timeout}s"
+    log_info "check: docker logs byparr"
+    failed=1
+  fi
+
+  # SABnzbd's version endpoint needs no API key. This proves the WebUI is up;
+  # it deliberately says nothing about whether usenet credentials are set,
+  # since running without them is a supported state.
+  if wait_for_http sabnzbd "http://127.0.0.1:8080/api?mode=version" "version" "$timeout"; then
+    log_ok "sabnzbd" "API responding (:8085/api)"
+  else
+    log_fail "sabnzbd" "API did not respond within ${timeout}s"
+    log_info "check: docker logs sabnzbd"
+    failed=1
+  fi
+
+  return "$failed"
+}
+
 # fetch_prowlarr_api_key [config_path]
 # Extracts <ApiKey>...</ApiKey> from prowlarr's config.xml.
 fetch_prowlarr_api_key() {

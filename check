@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
-# Standalone VPN-isolation verifier for prowlarr-stack.
+# Standalone health + VPN-isolation verifier for prowlarr-stack.
+#
+# Two gates, both fatal, because ./update uses this script to decide whether an
+# upgrade stands or gets rolled back:
+#   1. service health — every application container actually answers.
+#   2. VPN isolation  — traffic is routed per the configured topology.
+#
+# Both run even if the first fails, so a single invocation reports everything
+# that is wrong rather than only the first problem.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 source scripts/lib/common
+
+SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-120}"
 
 # Quick sanity: gluetun health.
 log_phase "gluetun health"
@@ -14,4 +24,10 @@ case "$status" in
   *) log_fail "gluetun" "$status"; die "gluetun is not healthy — check: docker logs gluetun" ;;
 esac
 
-verify_isolation
+failed=0
+verify_services "$SERVICE_TIMEOUT" || failed=1
+verify_isolation || failed=1
+
+if [[ $failed -ne 0 ]]; then
+  die "check failed — see the failures above"
+fi
